@@ -4407,6 +4407,256 @@ export function initWizardChess() {
     });
 
     // =========================================================================
+    // Web Export Functions: FEN, PGN, Canvas Snapshot, JSON & Shareable URL
+    // =========================================================================
+    function getBoardFEN() {
+      const ranks = [];
+      for (let r = 0; r < 8; r++) {
+        let emptyCount = 0;
+        let rankStr = '';
+        for (let c = 0; c < 8; c++) {
+          const p = boardState[r][c];
+          if (!p) {
+            emptyCount++;
+          } else {
+            if (emptyCount > 0) {
+              rankStr += emptyCount;
+              emptyCount = 0;
+            }
+            let char = 'p';
+            switch (p.type) {
+              case 'pawn': char = 'p'; break;
+              case 'rook': char = 'r'; break;
+              case 'knight': char = 'n'; break;
+              case 'bishop': char = 'b'; break;
+              case 'queen': char = 'q'; break;
+              case 'king': char = 'k'; break;
+              default: char = 'p'; break;
+            }
+            rankStr += p.color === 'w' ? char.toUpperCase() : char.toLowerCase();
+          }
+        }
+        if (emptyCount > 0) {
+          rankStr += emptyCount;
+        }
+        ranks.push(rankStr);
+      }
+
+      const activeColor = currentTurn === 'b' ? 'b' : 'w';
+
+      let castling = '';
+      const wk = boardState[7][4];
+      if (wk && wk.type === 'king' && wk.color === 'w' && !wk.hasMoved) {
+        const wrK = boardState[7][7];
+        if (wrK && wrK.type === 'rook' && wrK.color === 'w' && !wrK.hasMoved) castling += 'K';
+        const wrQ = boardState[7][0];
+        if (wrQ && wrQ.type === 'rook' && wrQ.color === 'w' && !wrQ.hasMoved) castling += 'Q';
+      }
+      const bk = boardState[0][4];
+      if (bk && bk.type === 'king' && bk.color === 'b' && !bk.hasMoved) {
+        const brK = boardState[0][7];
+        if (brK && brK.type === 'rook' && brK.color === 'b' && !brK.hasMoved) castling += 'k';
+        const brQ = boardState[0][0];
+        if (brQ && brQ.type === 'rook' && brQ.color === 'b' && !brQ.hasMoved) castling += 'q';
+      }
+      if (!castling) castling = '-';
+
+      let enPassant = '-';
+      if (moveHistory.length > 0) {
+        const lastEntry = moveHistory[moveHistory.length - 1];
+        const lastMove = lastEntry?.move;
+        if (lastMove && lastMove.pieceType === 'pawn' && Math.abs(lastMove.toR - lastMove.fromR) === 2) {
+          const epRow = (lastMove.fromR + lastMove.toR) / 2;
+          const fileChar = String.fromCharCode('a'.charCodeAt(0) + lastMove.toC);
+          const rankChar = String(8 - epRow);
+          enPassant = fileChar + rankChar;
+        }
+      }
+
+      const halfMoveClock = 0;
+      const fullMoveNumber = Math.max(1, Math.floor(moveHistory.length / 2) + 1);
+
+      return `${ranks.join('/')} ${activeColor} ${castling} ${enPassant} ${halfMoveClock} ${fullMoveNumber}`;
+    }
+
+    function loadBoardFEN(fenStr) {
+      if (!fenStr || typeof fenStr !== 'string') return false;
+      const parts = fenStr.trim().split(/\s+/);
+      const rows = parts[0].split('/');
+      if (rows.length !== 8) return false;
+
+      if (aiTimer) {
+        clearTimeout(aiTimer);
+        aiTimer = null;
+      }
+      activeMoveTweens.length = 0;
+      isAnimatingMove = false;
+      gameOver = false;
+      scriptedGameActive = false;
+      scriptDeviated = false;
+      preMoveHighlightTask = null;
+      clearCheckmateSequence();
+      clearSquareHighlights();
+      clearAllPieces();
+
+      for (let r = 0; r < 8; r++) {
+        const rowStr = rows[r];
+        let c = 0;
+        for (let i = 0; i < rowStr.length; i++) {
+          const ch = rowStr[i];
+          if (ch >= '1' && ch <= '8') {
+            c += parseInt(ch, 10);
+          } else {
+            if (c >= 8) break;
+            const color = ch === ch.toUpperCase() ? 'w' : 'b';
+            let type = 'pawn';
+            const lower = ch.toLowerCase();
+            if (lower === 'r') type = 'rook';
+            else if (lower === 'n') type = 'knight';
+            else if (lower === 'b') type = 'bishop';
+            else if (lower === 'q') type = 'queen';
+            else if (lower === 'k') type = 'king';
+            const inst = instantiatePiece(type, color, r, c);
+            inst.hasMoved = true;
+            if (type === 'pawn' && ((color === 'w' && r === 6) || (color === 'b' && r === 1))) {
+              inst.hasMoved = false;
+            }
+            if (type === 'king' && ((color === 'w' && r === 7 && c === 4) || (color === 'b' && r === 0 && c === 4))) {
+              inst.hasMoved = false;
+            }
+            boardState[r][c] = inst;
+            c++;
+          }
+        }
+      }
+
+      currentTurn = parts[1] === 'b' ? 'b' : 'w';
+      updateTurnUI();
+      renderer.shadowMap.needsUpdate = true;
+      renderer.render(scene, camera);
+      return true;
+    }
+
+    function getBoardPGN() {
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+      let result = '*';
+      if (gameOver) {
+        if (checkmateState.active) {
+          result = checkmateState.winner === 'White' ? '1-0' : '0-1';
+        } else {
+          result = '1/2-1/2';
+        }
+      }
+
+      const headers = [
+        `[Event "Wizard Chess Sanctum Match"]`,
+        `[Site "Wizard Chess 3D Web"]`,
+        `[Date "${date}"]`,
+        `[Round "1"]`,
+        `[White "${playerColor === 'w' ? 'Player' : 'Sanctum AI'}"]`,
+        `[Black "${playerColor === 'b' ? 'Player' : 'Sanctum AI'}"]`,
+        `[Result "${result}"]`,
+        `[Variant "Standard"]`,
+        `[FEN "${getBoardFEN()}"]`
+      ];
+
+      const colToChar = (c) => String.fromCharCode('a'.charCodeAt(0) + c);
+      const rowToRank = (r) => String(8 - r);
+
+      const moveStrings = [];
+      for (let i = 0; i < moveHistory.length; i++) {
+        const entry = moveHistory[i];
+        const mv = entry?.move;
+        if (!mv) continue;
+        let san = '';
+        const toSq = colToChar(mv.toC) + rowToRank(mv.toR);
+
+        if (mv.pieceType === 'king' && Math.abs(mv.toC - mv.fromC) === 2) {
+          san = mv.toC > mv.fromC ? 'O-O' : 'O-O-O';
+        } else {
+          let piecePrefix = '';
+          if (mv.pieceType === 'knight') piecePrefix = 'N';
+          else if (mv.pieceType === 'bishop') piecePrefix = 'B';
+          else if (mv.pieceType === 'rook') piecePrefix = 'R';
+          else if (mv.pieceType === 'queen') piecePrefix = 'Q';
+          else if (mv.pieceType === 'king') piecePrefix = 'K';
+
+          if (mv.pieceType === 'pawn') {
+            if (mv.capture) {
+              san = colToChar(mv.fromC) + 'x' + toSq;
+            } else {
+              san = toSq;
+            }
+            if (mv.promotion) {
+              const promoChar = mv.promotion === 'knight' ? 'N' : mv.promotion.charAt(0).toUpperCase();
+              san += '=' + promoChar;
+            }
+          } else {
+            san = piecePrefix + (mv.capture ? 'x' : '') + toSq;
+          }
+        }
+
+        if (i % 2 === 0) {
+          const moveNum = Math.floor(i / 2) + 1;
+          moveStrings.push(`${moveNum}. ${san}`);
+        } else {
+          moveStrings.push(san);
+        }
+      }
+
+      const body = moveStrings.length > 0 ? moveStrings.join(' ') + ` ${result}` : result;
+      return `${headers.join('\n')}\n\n${body}`;
+    }
+
+    function captureCanvasScreenshot() {
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL('image/png');
+    }
+
+    function getGameStateJSON() {
+      return JSON.stringify({
+        title: "Wizard Chess 3D Sanctum Match",
+        app: "Wizard Chess 3D",
+        exportTimestamp: new Date().toISOString(),
+        fen: getBoardFEN(),
+        pgn: getBoardPGN(),
+        turn: currentTurn,
+        playerColor,
+        capturedPieces: {
+          byWhite: capturedByWhite,
+          byBlack: capturedByBlack
+        },
+        gameState: {
+          gameOver,
+          checkmate: checkmateState.active ? {
+            winner: checkmateState.winner,
+            reason: "King Fallen"
+          } : null
+        },
+        moveHistory: moveHistory.map((h, idx) => ({
+          ply: idx + 1,
+          color: h.move?.color,
+          piece: h.move?.pieceType,
+          from: [h.move?.fromR, h.move?.fromC],
+          to: [h.move?.toR, h.move?.toC],
+          capture: h.move?.capture,
+          promotion: h.move?.promotion
+        }))
+      }, null, 2);
+    }
+
+    function getShareableWebURL() {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('fen', getBoardFEN());
+        url.searchParams.set('side', playerColor);
+        return url.toString();
+      } catch (e) {
+        return window.location.href;
+      }
+    }
+
+    // =========================================================================
     // Programmatic API for Automated Verification & Camera Inspection
     // =========================================================================
     window.wizardChess = {
@@ -4434,6 +4684,15 @@ export function initWizardChess() {
       closeLobbyModal,
       toggleUI,
       loadNotation: (pgn, opts) => loadNotationScript(pgn, opts),
+      exportBoardFEN: getBoardFEN,
+      getFEN: getBoardFEN,
+      loadBoardFEN: loadBoardFEN,
+      loadFEN: loadBoardFEN,
+      exportBoardPGN: getBoardPGN,
+      getPGN: getBoardPGN,
+      captureCanvasScreenshot: captureCanvasScreenshot,
+      getGameStateJSON: getGameStateJSON,
+      getShareableWebURL: getShareableWebURL,
       stepScriptForward,
       stepScriptBackward,
       triggerCheckmateSequence,
@@ -4944,7 +5203,14 @@ export function initWizardChess() {
       if (urlSide === 'b' || urlSide === 'black') {
         playerColor = 'b';
       }
-      resetChessBoard(true, true);
+      const urlFen = params.get('fen');
+      if (urlFen) {
+        resetChessBoard(false, true);
+        loadBoardFEN(urlFen);
+        setCameraForSide(playerColor, false);
+      } else {
+        resetChessBoard(true, true);
+      }
       if (navigator.webdriver) {
         window.wizardChess.stepBy(0.9, 15);
       } else {

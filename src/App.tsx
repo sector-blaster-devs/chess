@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { initWizardChess } from './wizardChessEngine.js';
+import { WebExportModal } from './WebExportModal';
 
 export default function App() {
   const initializedRef = useRef(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
 
   useEffect(() => {
     if (initializedRef.current) return;
@@ -152,6 +154,18 @@ export default function App() {
           >
             New Game
           </button>
+          <button
+            type="button"
+            className="hud-btn"
+            id="btn-web-export"
+            title="Open Web Export (Snapshot, PGN, FEN, Share Link, Offline Build)"
+            onClick={() => {
+              setMobileSheetOpen(false);
+              setExportModalOpen(true);
+            }}
+          >
+            Web Export ✦
+          </button>
 
           <div className="hud-divider" aria-hidden="true"></div>
           <div className="mobile-sheet-section-label">
@@ -229,12 +243,25 @@ export default function App() {
             <button className="checkmate-btn" id="btn-checkmate-newgame">
               New Game
             </button>
+            <button
+              type="button"
+              className="checkmate-btn"
+              id="btn-checkmate-export"
+              onClick={() => setExportModalOpen(true)}
+            >
+              Export Match ✦
+            </button>
             <button className="checkmate-btn secondary" id="btn-checkmate-dismiss">
               Dismiss
             </button>
           </div>
         </div>
       </div>
+
+      <WebExportModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+      />
     </>
   );
 }
